@@ -7,3 +7,6 @@ ChangeLog
 swift.egg-info
 .DS_Store
 .tox
+.project
+.pydevproject
+data
