@@ -166,13 +166,29 @@ class TestConstraints(unittest.TestCase):
 
     def test_check_mount(self):
         self.assertFalse(constraints.check_mount('', ''))
-        constraints.os = MockTrue() # mock os module
+        constraints.os = MockTrue()  # mock os module
         self.assertTrue(constraints.check_mount('/srv', '1'))
-        reload(constraints) # put it back
+        reload(constraints)  # put it back
 
     def test_check_float(self):
         self.assertFalse(constraints.check_float(''))
         self.assertTrue(constraints.check_float('0'))
+
+    def test_check_utf8(self):
+        unicode_sample = u'\uc77c\uc601'
+        valid_utf8_str = unicode_sample.encode('utf-8')
+        invalid_utf8_str = unicode_sample.encode('utf-8')[::-1]
+
+        for false_argument in [None,
+                               '',
+                               invalid_utf8_str,
+                               ]:
+            self.assertFalse(constraints.check_utf8(false_argument))
+
+        for true_argument in ['this is ascii and utf-8, too',
+                              unicode_sample,
+                              valid_utf8_str]:
+            self.assertTrue(constraints.check_utf8(true_argument))
 
 if __name__ == '__main__':
     unittest.main()

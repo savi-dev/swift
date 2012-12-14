@@ -29,10 +29,9 @@ import errno
 from tempfile import mkstemp
 
 from eventlet import sleep, Timeout
-import simplejson as json
 import sqlite3
 
-from swift.common.utils import normalize_timestamp, renamer, \
+from swift.common.utils import json, normalize_timestamp, renamer, \
         mkdirs, lock_parent_directory, fallocate
 from swift.common.exceptions import LockTimeout
 
@@ -45,6 +44,10 @@ BROKER_TIMEOUT = 25
 PICKLE_PROTOCOL = 2
 #: Max number of pending entries
 PENDING_CAP = 131072
+
+
+def utf8encode(*args):
+    return [(s.encode('utf8') if isinstance(s, unicode) else s) for s in args]
 
 
 class DatabaseConnectionError(sqlite3.DatabaseError):
@@ -1044,7 +1047,7 @@ class ContainerBroker(DatabaseBroker):
             conn.commit()
 
     def list_objects_iter(self, limit, marker, end_marker, prefix, delimiter,
-                          path=None, format=None):
+                          path=None):
         """
         Get a list of objects sorted by name starting at marker onward, up
         to limit entries.  Entries will begin with the prefix and will not
@@ -1057,11 +1060,12 @@ class ContainerBroker(DatabaseBroker):
         :param delimeter: delimeter for query
         :param path: if defined, will set the prefix and delimter based on
                      the path
-        :param format: TOOD: remove as it is no longer used
 
         :returns: list of tuples of (name, created_at, size, content_type,
                   etag)
         """
+        (marker, end_marker, prefix, delimiter, path) = utf8encode(
+            marker, end_marker, prefix, delimiter, path)
         try:
             self._commit_puts()
         except LockTimeout:
@@ -1367,14 +1371,14 @@ class AccountBroker(DatabaseBroker):
     def reclaim(self, container_timestamp, sync_timestamp):
         """
         Delete rows from the container table that are marked deleted and
-        whose created_at timestamp is < object_timestamp.  Also deletes rows
+        whose created_at timestamp is < container_timestamp.  Also deletes rows
         from incoming_sync and outgoing_sync where the updated_at timestamp is
         < sync_timestamp.
 
         In addition, this calls the DatabaseBroker's :func:_reclaim method.
 
-        :param object_timestamp: max created_at timestamp of container rows to
-                                 delete
+        :param container_timestamp: max created_at timestamp of container rows
+                                    to delete
         :param sync_timestamp: max update_at timestamp of sync rows to delete
         """
 
@@ -1555,6 +1559,8 @@ class AccountBroker(DatabaseBroker):
 
         :returns: list of tuples of (name, object_count, bytes_used, 0)
         """
+        (marker, end_marker, prefix, delimiter) = utf8encode(
+            marker, end_marker, prefix, delimiter)
         try:
             self._commit_puts()
         except LockTimeout:

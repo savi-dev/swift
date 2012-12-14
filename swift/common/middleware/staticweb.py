@@ -471,8 +471,12 @@ class _StaticWebContext(WSGIContext):
             client = env['HTTP_X_FORWARDED_FOR'].split(',')[0].strip()
         logged_headers = None
         if self.log_headers:
-            logged_headers = '\n'.join('%s: %s' % (k, v)
-                for k, v in req.headers.items())
+            headers = []
+            for k, v in env.iteritems():
+                if k.startswith('HTTP_'):
+                    k = k[len('HTTP_'):].replace('_', '-').title()
+                    headers.append((k, v))
+            logged_headers = '\n'.join('%s: %s' % (k, v) for k, v in headers)
         self.access_logger.info(' '.join(quote(str(x)) for x in (
             client or '-',
             env.get('REMOTE_ADDR', '-'),
@@ -519,7 +523,7 @@ class StaticWeb(object):
         self.access_logger = get_logger(access_log_conf,
                                         log_route='staticweb-access')
         #: Indicates whether full HTTP headers should be logged or not.
-        self.log_headers = conf.get('log_headers', 'f').lower() in TRUE_VALUES
+        self.log_headers = conf.get('log_headers', 'no').lower() in TRUE_VALUES
 
     def __call__(self, env, start_response):
         """

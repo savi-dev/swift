@@ -27,14 +27,14 @@ from webob.exc import HTTPAccepted, HTTPBadRequest, \
     HTTPCreated, HTTPForbidden, HTTPInternalServerError, \
     HTTPMethodNotAllowed, HTTPNoContent, HTTPNotFound, \
     HTTPPreconditionFailed, HTTPConflict
-import simplejson
 
 import swift.common.db
 from swift.common.db import AccountBroker
 from swift.common.utils import get_logger, get_param, hash_path, public, \
-    normalize_timestamp, split_path, storage_directory, TRUE_VALUES
+    normalize_timestamp, split_path, storage_directory, TRUE_VALUES, \
+    validate_device_partition, json
 from swift.common.constraints import ACCOUNT_LISTING_LIMIT, \
-    check_mount, check_float, check_utf8
+    check_mount, check_float, check_utf8, FORMAT2CONTENT_TYPE
 from swift.common.db_replicator import ReplicatorRpc
 from swift.common.http import HTTPInsufficientStorage
 
@@ -69,6 +69,7 @@ class AccountController(object):
         start_time = time.time()
         try:
             drive, part, account = split_path(unquote(req.path), 3)
+            validate_device_partition(drive, part)
         except ValueError, err:
             self.logger.increment('DELETE.errors')
             return HTTPBadRequest(body=str(err), content_type='text/plain',
@@ -96,6 +97,7 @@ class AccountController(object):
         try:
             drive, part, account, container = split_path(unquote(req.path),
                                                          3, 4)
+            validate_device_partition(drive, part)
         except ValueError, err:
             self.logger.increment('PUT.errors')
             return HTTPBadRequest(body=str(err), content_type='text/plain',
@@ -164,6 +166,7 @@ class AccountController(object):
         try:
             drive, part, account, container = split_path(unquote(req.path),
                                                          3, 4)
+            validate_device_partition(drive, part)
         except ValueError, err:
             self.logger.increment('HEAD.errors')
             return HTTPBadRequest(body=str(err), content_type='text/plain',
@@ -201,6 +204,7 @@ class AccountController(object):
         start_time = time.time()
         try:
             drive, part, account = split_path(unquote(req.path), 3)
+            validate_device_partition(drive, part)
         except ValueError, err:
             self.logger.increment('GET.errors')
             return HTTPBadRequest(body=str(err), content_type='text/plain',
@@ -247,7 +251,8 @@ class AccountController(object):
             return HTTPBadRequest(body='parameters not utf8',
                                   content_type='text/plain', request=req)
         if query_format:
-            req.accept = 'application/%s' % query_format.lower()
+            req.accept = FORMAT2CONTENT_TYPE.get(query_format.lower(),
+                                                 FORMAT2CONTENT_TYPE['plain'])
         try:
             out_content_type = req.accept.best_match(
                                     ['text/plain', 'application/json',
@@ -260,17 +265,14 @@ class AccountController(object):
         account_list = broker.list_containers_iter(limit, marker, end_marker,
                                                    prefix, delimiter)
         if out_content_type == 'application/json':
-            json_pattern = ['"name":%s', '"count":%s', '"bytes":%s']
-            json_pattern = '{' + ','.join(json_pattern) + '}'
-            json_out = []
+            data = []
             for (name, object_count, bytes_used, is_subdir) in account_list:
-                name = simplejson.dumps(name)
                 if is_subdir:
-                    json_out.append('{"subdir":%s}' % name)
+                    data.append({'subdir': name})
                 else:
-                    json_out.append(json_pattern %
-                        (name, object_count, bytes_used))
-            account_list = '[' + ','.join(json_out) + ']'
+                    data.append({'name': name, 'count': object_count,
+                                'bytes': bytes_used})
+            account_list = json.dumps(data)
         elif out_content_type.endswith('/xml'):
             output_list = ['<?xml version="1.0" encoding="UTF-8"?>',
                            '<account name="%s">' % account]
@@ -305,16 +307,17 @@ class AccountController(object):
         start_time = time.time()
         try:
             post_args = split_path(unquote(req.path), 3)
+            drive, partition, hash = post_args
+            validate_device_partition(drive, partition)
         except ValueError, err:
             self.logger.increment('REPLICATE.errors')
             return HTTPBadRequest(body=str(err), content_type='text/plain',
                                                     request=req)
-        drive, partition, hash = post_args
         if self.mount_check and not check_mount(self.root, drive):
             self.logger.increment('REPLICATE.errors')
             return HTTPInsufficientStorage(drive=drive, request=req)
         try:
-            args = simplejson.load(req.environ['wsgi.input'])
+            args = json.load(req.environ['wsgi.input'])
         except ValueError, err:
             self.logger.increment('REPLICATE.errors')
             return HTTPBadRequest(body=str(err), content_type='text/plain')
@@ -329,6 +332,7 @@ class AccountController(object):
         start_time = time.time()
         try:
             drive, part, account = split_path(unquote(req.path), 3)
+            validate_device_partition(drive, part)
         except ValueError, err:
             self.logger.increment('POST.errors')
             return HTTPBadRequest(body=str(err), content_type='text/plain',
