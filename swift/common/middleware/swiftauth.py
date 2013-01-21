@@ -1,14 +1,23 @@
+'''
+Created on Jan 15, 2013
 
+@author: Mohammad Faraji<ms.faraji@utoronto.ca>
+'''
 import webob
 
 from swift.common.middleware import acl as swift_acl
 from swift.common import utils as swift_utils
+from keystoneclient.client import HTTPClient
 
-class InvalidRoleName(Exception):
+
+class ServiceError(Exception):
     pass
 
-class SwiftAuth(object):
-    """Swift middleware to Keystone authorization system.
+class ConfigurationError(Exception):
+    pass
+
+class AuthZ(object):
+    """AuthZ middleware to Keystone authorization system.
 
     In Swift's proxy-server.conf add this middleware to your pipeline::
 
@@ -65,8 +74,6 @@ class SwiftAuth(object):
         self.conf = conf
         self.logger = swift_utils.get_logger(conf, log_route='swiftauth')
         self.reseller_prefix = conf.get('reseller_prefix', 'AUTH_').strip()
-        self.operator_roles = conf.get('operator_roles',
-                                       'admin, swiftoperator')
         self.reseller_admin_role = conf.get('reseller_admin_role',
                                             'ResellerAdmin')
         config_is_admin = conf.get('is_admin', "false").lower()
@@ -76,18 +83,42 @@ class SwiftAuth(object):
                                    if h.strip()]
         config_overrides = conf.get('allow_overrides', 't').lower()
         self.allow_overrides = config_overrides in swift_utils.TRUE_VALUES
-        memcache_servers = conf.get('memcache_servers')
-        if memcache_servers:
-            try:
-                import memcache
-                import iso8601
-                self.logger.info('Using memcache for caching token')
-                self._cache = memcache.Client(memcache_servers.split(','))
-                self._iso8601 = iso8601
-            except ImportError as e:
-                self.logger.warn('disabled caching due to missing libraries %s', e)
+        self.authz_host = self.conf.get('authz_host')
+        self.authz_port = self.conf.get('authz_port')
+        self.authz_protocol = self.conf.get('authz_protocol')
+        self.authz_uri = self.conf.get('authz_uri')
+        if self.authz_uri is None:
+            self.authz_uri = '%s://%s:%s' % (self.authz_protocol,
+                                            self.authz_host,
+                                            self.authz_port)
+        # SSL
+        self.cert_file = self.conf.get('certfile')
+        self.key_file = self.conf.get('keyfile')
+        
+        # Credentials used to verify this component with the Auth service since
+        # validating tokens is a privileged call
+        self.admin_token = self.conf.get('admin_token')
+        self.admin_user = self.conf.get('admin_user')
+        self.admin_password = self.conf.get('admin_password')
+        self.admin_tenant_name = self.conf.get('admin_tenant_name')
+        
+        # Creating Client
+        if self.
+        self.httpClient = HTTPClient(username=self.admin_user,
+                                     password=self.admin_password)
 
+        
+        
+        
+        
     def __call__(self, environ, start_response):
+        """Authorize incoming request.
+
+        Authorize and send downstream on success. Reject request if
+        we can't authorize.
+
+        """
+        self.logger.debug('Authorizing User Request')
         identity = self._keystone_identity(environ)
 
         # Check if one of the middleware like tempurl or formpost have
@@ -107,7 +138,7 @@ class SwiftAuth(object):
         else:
             self.logger.debug('Authorizing as anonymous')
             environ['swift.authorize'] = self.authorize_anonymous
-            
+
         environ['swift.clean_acl'] = swift_acl.clean_acl
 
         return self.app(environ, start_response)
@@ -117,7 +148,6 @@ class SwiftAuth(object):
         if environ.get('HTTP_X_IDENTITY_STATUS') != 'Confirmed':
             return
         roles = []
-        self.logger("RRRRR %s" % environ)
         if 'HTTP_X_ROLES' in environ:
             roles = environ['HTTP_X_ROLES'].split(',')
         identity = {'user': environ.get('HTTP_X_USER_NAME'),
@@ -134,14 +164,9 @@ class SwiftAuth(object):
         return account == self._get_account_for_tenant(tenant_id)
 
     def authorize(self, req):
-        self.logger.debug("Hey %s" % req)
+        self.logger.debug("Entering Authorization Process")
         env = req.environ
         env_identity = env.get('keystone.identity', {})
-        if not 'roles' in env_identity or not env_identity['roles']:
-            return self.denied_response(req)
-#        for role in env_identity['roles']:
-#            if req.environ['X-Policy']:
-#                self.logger.debug("This is policy %s" % req.environ['X-Policy'])
         tenant_id, tenant_name = env_identity.get('tenant')
 
         try:
@@ -210,6 +235,9 @@ class SwiftAuth(object):
                 return
 
         return self.denied_response(req)
+    
+    def _get_policy(self,method.path):
+        
 
     def authorize_anonymous(self, req):
         """
@@ -272,39 +300,70 @@ class SwiftAuth(object):
             return webob.exc.HTTPForbidden(request=req)
         else:
             return webob.exc.HTTPUnauthorized(request=req)
-    
-    def _cache_get(self, role_name, timestamp):
-        """Return policy information from cache.
-        """
-        if self._cache and role_name:
-            key = 'roles/%s' % role_name
-            cached = self._cache.get(key)
-            if not cached:
-                self._cache_put(role_name)
-                cached = self._cache.get(key)
-            policy, expires = cached
-            if expires != self._iso8601.parse_date(timestamp).strftime('%s'):
-                self._cache_put(role_name)
-        return policy
         
-    def _cache_put(self, role_name):
-        # Retrieve the information
-        data = {}
-        if self._cache and data:
-            key = 'roles/%s' % role_name
-            timestamp = data['expires']
-            expires = self._iso8601.parse_date(timestamp).strftime('%s')
-            self.logger.debug('Storing %s Policy in memcache', role_name)
-            self._cache.set(key,
-                            (data, expires))
+        
+        
+    def _check(self, match, target_dict, cred_dict):
+        match_kind, match_value = match.split(':', 1)
+        try:
+            f = getattr(self, '_check_%s' % match_kind)
+        except AttributeError:
+            if not self._check_generic(match, target_dict, cred_dict):
+                return False
         else:
-            raise InvalidRoleName('Role of the user is not valid')
-            
+            if not f(match_value, target_dict, cred_dict):
+                return False
+        return True
+
+    def check(self, match_list, target_dict, cred_dict):
+        """Checks authorization of some rules against credentials.
+
+        Detailed description of the check with examples in policy.enforce().
+
+        :param match_list: nested tuples of data to match against
+        :param target_dict: dict of object properties
+        :param credentials_dict: dict of actor properties
+
+        :returns: True if the check passes
+
+        """
+        if not match_list:
+            return True
+        for and_list in match_list:
+            if isinstance(and_list, basestring):
+                and_list = (and_list,)
+            if all([self._check(item, target_dict, cred_dict)
+                    for item in and_list]):
+                return True
+        return False
+
+    def _check_rule(self, match, target_dict, cred_dict):
+        """Recursively checks credentials based on the brains rules."""
+        try:
+            new_match_list = self.rules[match]
+        except KeyError:
+            if self.default_rule and match != self.default_rule:
+                new_match_list = ('rule:%s' % self.default_rule,)
+            else:
+                return False
+
+        return self.check(new_match_list, target_dict, cred_dict)
+
+class Brain(object):
+    """ Implement Policy Engine """
+    
+    def __init__(self, conf):
+        self.address = conf['address']
+        self.port = conf['port']
+        self.username= conf['username']
+        self.password = conf['password']
+        
+        
 def filter_factory(global_conf, **local_conf):
     """Returns a WSGI filter app for use with paste.deploy."""
     conf = global_conf.copy()
     conf.update(local_conf)
 
     def auth_filter(app):
-        return SwiftAuth(app, conf)
+        return AuthZ(app, conf)
     return auth_filter

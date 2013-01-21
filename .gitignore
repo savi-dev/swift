@@ -10,3 +10,4 @@ swift.egg-info
 .project
 .pydevproject
 data
+.settings
