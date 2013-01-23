@@ -3,7 +3,7 @@ import webob
 
 from swift.common.middleware import acl as swift_acl
 from swift.common import utils as swift_utils
-
+from keystoneclient.client import HTTPClient
 class InvalidRoleName(Exception):
     pass
 
@@ -86,7 +86,27 @@ class SwiftAuth(object):
                 self._iso8601 = iso8601
             except ImportError as e:
                 self.logger.warn('disabled caching due to missing libraries %s', e)
+        self.auth_host = self._conf_get('auth_host')
+        self.auth_port = int(self._conf_get('auth_port'))
+        self.auth_protocol = self._conf_get('auth_protocol')
+        self.auth_uri = self._conf_get('auth_uri')
+        if self.auth_uri is None:
+            self.auth_uri = '%s://%s:%s' % (self.auth_protocol,
+                                            self.auth_host,
+                                            self.auth_port)
 
+        # SSL
+        self.cert_file = self._conf_get('certfile')
+        self.key_file = self._conf_get('keyfile')
+        
+        # Credentials used to verify this component with the Auth service since
+        # validating tokens is a privileged call
+        self.admin_token = self._conf_get('admin_token')
+        self.admin_user = self._conf_get('admin_user')
+        self.admin_password = self._conf_get('admin_password')
+        self.admin_tenant_name = self._conf_get('admin_tenant_name')
+        self.httpclient = HTTPClient(username)
+        
     def __call__(self, environ, start_response):
         identity = self._keystone_identity(environ)
 
@@ -116,14 +136,14 @@ class SwiftAuth(object):
         """Extract the identity from the Keystone auth component."""
         if environ.get('HTTP_X_IDENTITY_STATUS') != 'Confirmed':
             return
-        roles = []
-        self.logger("RRRRR %s" % environ)
-        if 'HTTP_X_ROLES' in environ:
-            roles = environ['HTTP_X_ROLES'].split(',')
+#        roles = []
+#        if 'HTTP_X_ROLES' in environ:
+#            roles = environ['HTTP_X_ROLES'].split(',')
         identity = {'user': environ.get('HTTP_X_USER_NAME'),
                     'tenant': (environ.get('HTTP_X_TENANT_ID'),
                                environ.get('HTTP_X_TENANT_NAME')),
-                    'roles': roles}
+                    #'roles': roles,
+                    'roles_policy': environ['HTTP_X_POLICY']}
         return identity
 
     def _get_account_for_tenant(self, tenant_id):
@@ -134,15 +154,25 @@ class SwiftAuth(object):
         return account == self._get_account_for_tenant(tenant_id)
 
     def authorize(self, req):
-        self.logger.debug("Hey %s" % req)
         env = req.environ
         env_identity = env.get('keystone.identity', {})
-        if not 'roles' in env_identity or not env_identity['roles']:
+        if not 'roles_policy' in env_identity or not env_identity['roles_policy']:
             return self.denied_response(req)
-#        for role in env_identity['roles']:
-#            if req.environ['X-Policy']:
-#                self.logger.debug("This is policy %s" % req.environ['X-Policy'])
         tenant_id, tenant_name = env_identity.get('tenant')
+        user_roles = env_identity.get('roles_policy', []).keys()
+
+        
+        # Getting the policies
+        
+        
+        
+        # Check whether user is admin or not
+        if self.reseller_admin_role in user_roles:
+            msg = 'User %s has reseller admin authorizing'
+            self.logger.debug(msg % tenant_id)
+            req.environ['swift_owner'] = True
+            return
+        
 
         try:
             part = swift_utils.split_path(req.path, 1, 4, True)
@@ -150,15 +180,9 @@ class SwiftAuth(object):
         except ValueError:
             return webob.exc.HTTPNotFound(request=req)
 
-        user_roles = env_identity.get('roles', [])
+        
 
-        # Give unconditional access to a user with the reseller_admin
-        # role.
-        if self.reseller_admin_role in user_roles:
-            msg = 'User %s has reseller admin authorizing'
-            self.logger.debug(msg % tenant_id)
-            req.environ['swift_owner'] = True
-            return
+        
 
         # Check if a user tries to access an account that does not match their
         # token
@@ -272,19 +296,23 @@ class SwiftAuth(object):
             return webob.exc.HTTPForbidden(request=req)
         else:
             return webob.exc.HTTPUnauthorized(request=req)
+    def get_policy(self, roles_policy):
+        for (role,policy) in roles_policy:
+            self._cache_get(role,policy)
     
-    def _cache_get(self, role_name, timestamp):
+    def _cache_get(self, role,policy):
         """Return policy information from cache.
         """
-        if self._cache and role_name:
-            key = 'roles/%s' % role_name
+        
+        if self._cache and role:
+            key = 'roles/%s' % role
             cached = self._cache.get(key)
             if not cached:
-                self._cache_put(role_name)
+                self._cache_put(role)
                 cached = self._cache.get(key)
             policy, expires = cached
-            if expires != self._iso8601.parse_date(timestamp).strftime('%s'):
-                self._cache_put(role_name)
+            if expires != self._iso8601.parse_date(policy[1]).strftime('%s'):
+                self._cache_put(role)
         return policy
         
     def _cache_put(self, role_name):
