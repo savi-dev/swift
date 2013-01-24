@@ -86,26 +86,28 @@ class SwiftAuth(object):
                 self._iso8601 = iso8601
             except ImportError as e:
                 self.logger.warn('disabled caching due to missing libraries %s', e)
-        self.auth_host = self._conf_get('auth_host')
-        self.auth_port = int(self._conf_get('auth_port'))
-        self.auth_protocol = self._conf_get('auth_protocol')
-        self.auth_uri = self._conf_get('auth_uri')
+        self.auth_host = conf.get('auth_host')
+        self.auth_port = int(conf.get('auth_port'))
+        self.auth_protocol = conf.get('auth_protocol')
+        self.auth_uri = conf.get('auth_uri')
         if self.auth_uri is None:
             self.auth_uri = '%s://%s:%s' % (self.auth_protocol,
                                             self.auth_host,
                                             self.auth_port)
 
         # SSL
-        self.cert_file = self._conf_get('certfile')
-        self.key_file = self._conf_get('keyfile')
+        self.cert_file = conf.get('certfile')
+        self.key_file = conf.get('keyfile')
         
         # Credentials used to verify this component with the Auth service since
         # validating tokens is a privileged call
-        self.admin_token = self._conf_get('admin_token')
-        self.admin_user = self._conf_get('admin_user')
-        self.admin_password = self._conf_get('admin_password')
-        self.admin_tenant_name = self._conf_get('admin_tenant_name')
-        self.httpclient = HTTPClient(username)
+        self.admin_token = conf.get('admin_token')
+        self.admin_user = conf.get('admin_user')
+        self.admin_password = conf.get('admin_password')
+        self.admin_tenant_name = conf.get('admin_tenant_name')
+        self.httpclient = HTTPClient(username = self.admin_user,
+                                     tenant_name = self.admin_tenant_name,
+                                     auth_url= self.auth_uri)
         
     def __call__(self, environ, start_response):
         identity = self._keystone_identity(environ)
@@ -158,6 +160,7 @@ class SwiftAuth(object):
         env_identity = env.get('keystone.identity', {})
         if not 'roles_policy' in env_identity or not env_identity['roles_policy']:
             return self.denied_response(req)
+        self.get_policy(env_identity['roles_policy'])
         tenant_id, tenant_name = env_identity.get('tenant')
         user_roles = env_identity.get('roles_policy', []).keys()
 
@@ -298,7 +301,7 @@ class SwiftAuth(object):
             return webob.exc.HTTPUnauthorized(request=req)
     def get_policy(self, roles_policy):
         for (role,policy) in roles_policy:
-            self._cache_get(role,policy)
+            self.fetch_policy(policy[1])
     
     def _cache_get(self, role,policy):
         """Return policy information from cache.
@@ -327,7 +330,11 @@ class SwiftAuth(object):
                             (data, expires))
         else:
             raise InvalidRoleName('Role of the user is not valid')
-            
+        
+    def fetch_policy(self, policy_id):
+        resp = self.httpclient.request("/policies/%s" % policy_id, 'get')
+        self.logger.debug("Response %s" % resp)
+               
 def filter_factory(global_conf, **local_conf):
     """Returns a WSGI filter app for use with paste.deploy."""
     conf = global_conf.copy()
