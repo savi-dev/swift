@@ -1,9 +1,11 @@
 
 import webob
+import json
 
 from swift.common.middleware import acl as swift_acl
 from swift.common import utils as swift_utils
-from keystoneclient.client import HTTPClient
+from keystoneclient.v2_0 import Client as HTTPClient
+
 class InvalidRoleName(Exception):
     pass
 
@@ -32,7 +34,7 @@ class SwiftAuth(object):
 
         [filter:swiftauth]
         paste.filter_factory = swift.middleware.swiftauth:filter_factory
-        operator_roles = admin, swiftoperator
+        operator_roles = admin
 
     This maps tenants to account in Swift.
 
@@ -105,11 +107,13 @@ class SwiftAuth(object):
         self.admin_user = conf.get('admin_user')
         self.admin_password = conf.get('admin_password')
         self.admin_tenant_name = conf.get('admin_tenant_name')
-        self.httpclient = HTTPClient(username = self.admin_user,
+        self.kc = HTTPClient(username = self.admin_user,
+                                     password=self.admin_password,
                                      tenant_name = self.admin_tenant_name,
                                      auth_url= self.auth_uri)
         
     def __call__(self, environ, start_response):
+        self.logger.debug("TTTTT %s" % environ)
         identity = self._keystone_identity(environ)
 
         # Check if one of the middleware like tempurl or formpost have
@@ -138,13 +142,13 @@ class SwiftAuth(object):
         """Extract the identity from the Keystone auth component."""
         if environ.get('HTTP_X_IDENTITY_STATUS') != 'Confirmed':
             return
-#        roles = []
-#        if 'HTTP_X_ROLES' in environ:
-#            roles = environ['HTTP_X_ROLES'].split(',')
+        roles = []
+        if 'HTTP_X_ROLES' in environ:
+            roles = environ['HTTP_X_ROLES'].split(',')
         identity = {'user': environ.get('HTTP_X_USER_NAME'),
                     'tenant': (environ.get('HTTP_X_TENANT_ID'),
                                environ.get('HTTP_X_TENANT_NAME')),
-                    #'roles': roles,
+                    'roles': roles,
                     'roles_policy': environ['HTTP_X_POLICY']}
         return identity
 
@@ -157,18 +161,16 @@ class SwiftAuth(object):
 
     def authorize(self, req):
         env = req.environ
+        self.logger.debug("Entering Authorization")
+        
         env_identity = env.get('keystone.identity', {})
-        if not 'roles_policy' in env_identity or not env_identity['roles_policy']:
-            return self.denied_response(req)
-        self.get_policy(env_identity['roles_policy'])
+        
+        
         tenant_id, tenant_name = env_identity.get('tenant')
-        user_roles = env_identity.get('roles_policy', []).keys()
-
-        
-        # Getting the policies
         
         
         
+        user_roles = env_identity.get('roles', [])
         # Check whether user is admin or not
         if self.reseller_admin_role in user_roles:
             msg = 'User %s has reseller admin authorizing'
@@ -176,17 +178,31 @@ class SwiftAuth(object):
             req.environ['swift_owner'] = True
             return
         
+        # Check the roles the user is belonging to. If the user is
+        # part of the role defined in the config variable
+        # operator_roles (like admin) then it will be
+        # promoted as an admin of the account/tenant.
 
+        for role in self.operator_roles.split(','):
+            role = role.strip()
+            self.logger.debug("The operator %s - %s" % (role, user_roles))
+            if role in user_roles:
+                log_msg = 'allow user with role %s as account admin' % (role)
+                self.logger.debug(log_msg)
+                req.environ['swift_owner'] = True
+                return        
+        
+        
+        if not 'roles_policy' in env_identity or not env_identity['roles_policy']:
+            return self.denied_response(req)
+        
         try:
             part = swift_utils.split_path(req.path, 1, 4, True)
             version, account, container, obj = part
         except ValueError:
             return webob.exc.HTTPNotFound(request=req)
-
-        
-
-        
-
+        self.logger.debug(" The action is %s and container is %s and object is %s" 
+                          % (self.find_action(req.method, container, obj),container, obj))
         # Check if a user tries to access an account that does not match their
         # token
         if not self._reseller_check(account, tenant_id):
@@ -194,17 +210,16 @@ class SwiftAuth(object):
             self.logger.debug(log_msg)
             return self.denied_response(req)
 
-        # Check the roles the user is belonging to. If the user is
-        # part of the role defined in the config variable
-        # operator_roles (like admin) then it will be
-        # promoted as an admin of the account/tenant.
-        for role in self.operator_roles.split(','):
-            role = role.strip()
-            if role in user_roles:
-                log_msg = 'allow user with role %s as account admin' % (role)
-                self.logger.debug(log_msg)
-                req.environ['swift_owner'] = True
-                return
+      
+        action = self.find_action(req.method, container, obj)
+        if action == None:
+            return self.denied_response(req)
+        
+        result = self._authorize_policy(env_identity['roles_policy'],action)   
+        if result:
+            return
+       
+       
 
         # If user is of the same name of the tenant then make owner of it.
         user = env_identity.get('user', '')
@@ -299,42 +314,73 @@ class SwiftAuth(object):
             return webob.exc.HTTPForbidden(request=req)
         else:
             return webob.exc.HTTPUnauthorized(request=req)
-    def get_policy(self, roles_policy):
-        for (role,policy) in roles_policy:
-            self.fetch_policy(policy[1])
-    
-    def _cache_get(self, role,policy):
+        
+    def _authorize_policy(self, roles_policy, action):
+        for role in roles_policy.keys():
+            policy_meta = roles_policy.get(role)
+            policy = self._cache_get(role, policy_meta)
+            for item in policy:
+                if action == item.encode('ascii'):
+                    self.logger.debug("I am authorized")
+                    return True
+            self.logger.debug("Entering the Policy %s" % policy)   
+        return False
+             
+    def _cache_get(self, role,policy_meta):
         """Return policy information from cache.
         """
-        
         if self._cache and role:
-            key = 'roles/%s' % role
+            key = 'roles/%s' % str(role)
             cached = self._cache.get(key)
             if not cached:
-                self._cache_put(role)
-                cached = self._cache.get(key)
-            policy, expires = cached
-            if expires != self._iso8601.parse_date(policy[1]).strftime('%s'):
-                self._cache_put(role)
-        return policy
+                return self._cache_put(role, policy_meta[0])
+            else:
+                policy, expires = cached
+            if expires != policy_meta[1]:
+                return self._cache_put(role,policy_meta[0])
+            return policy
+
         
-    def _cache_put(self, role_name):
+    def _cache_put(self, role_name, policy_id):
         # Retrieve the information
-        data = {}
-        if self._cache and data:
-            key = 'roles/%s' % role_name
-            timestamp = data['expires']
+        self.logger.debug("Putting role %s into cache" % role_name)
+        (blob,timestamp) = self.fetch_policy(policy_id)
+        if self._cache and blob:
+            key = 'roles/%s' % str(role_name)
             expires = self._iso8601.parse_date(timestamp).strftime('%s')
             self.logger.debug('Storing %s Policy in memcache', role_name)
             self._cache.set(key,
-                            (data, expires))
+                            (blob, expires))
+            return blob
         else:
             raise InvalidRoleName('Role of the user is not valid')
         
     def fetch_policy(self, policy_id):
-        resp = self.httpclient.request("/policies/%s" % policy_id, 'get')
-        self.logger.debug("Response %s" % resp)
-               
+        policy = self.kc.policies.get(policy_id)
+        blob = json.loads(policy.blob)
+        self.logger.debug("TTTTT %s" % blob)
+        return (blob['swift'],policy.timestamp)
+       
+    def find_action(self, method, container, obj):
+        if method in ['DELETE','PUT', 'POST']:
+            return self._find_write(container, obj) 
+        elif method in ['GET', 'HEAD']:
+            return self._find_read(container, obj)
+    
+    def _find_read(self, container, obj):      
+        if not container and not obj:
+            return 'list_containers'
+        elif obj:
+            return 'read_object'
+        elif container:
+            return 'read_container'
+
+    def _find_write(self, container, obj):
+        if obj:
+            return 'write_object'
+        elif container:
+            return 'write_container'
+        
 def filter_factory(global_conf, **local_conf):
     """Returns a WSGI filter app for use with paste.deploy."""
     conf = global_conf.copy()

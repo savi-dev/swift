@@ -25,6 +25,7 @@
 # collected. We've seen objects hang around forever otherwise.
 
 import time
+import logging
 from urllib import unquote
 from random import shuffle
 
@@ -36,6 +37,7 @@ from swift.common.constraints import check_metadata, MAX_ACCOUNT_NAME_LENGTH
 from swift.common.http import is_success, HTTP_NOT_FOUND
 from swift.proxy.controllers.base import Controller
 
+LOG = logging.getLogger(__name__)
 
 class AccountController(Controller):
     """WSGI controller for account requests"""
@@ -47,6 +49,7 @@ class AccountController(Controller):
 
     def GETorHEAD(self, req):
         """Handler for HTTP GET/HEAD requests."""
+        LOG.debug("Entering Account Controller")
         partition, nodes = self.app.account_ring.get_nodes(self.account_name)
         shuffle(nodes)
         resp = self.GETorHEAD_base(req, _('Account'), partition, nodes,
