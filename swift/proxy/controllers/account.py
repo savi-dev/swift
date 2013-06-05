@@ -51,7 +51,6 @@ class AccountController(Controller):
     @protected(action="list-account")
     def GETorHEAD(self, req):
         """Handler for HTTP GET/HEAD requests."""
-        self.app.logger.debug("Entering Account Controller %s" % req.headers['Enforce'])
         partition, nodes = self.app.account_ring.get_nodes(self.account_name)
         shuffle(nodes)
         resp = self.GETorHEAD_base(req, _('Account'), partition, nodes,

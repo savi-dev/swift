@@ -73,6 +73,7 @@ class Authorize(object):
         self.auth_host = self._conf_get('auth_host')
         self.auth_port = int(self._conf_get('auth_port'))
         self.auth_protocol = self._conf_get('auth_protocol')
+        self.service = self._conf_get('service')
         if self.auth_protocol == 'http':
             self.http_client_class = httplib.HTTPConnection
         else:
@@ -130,6 +131,7 @@ class Authorize(object):
         if environ.get('HTTP_X_IDENTITY_STATUS') != 'Confirmed':
             return
         roles = []
+        self.logger.debug("EEEEEEEEEEEEEEEE %s" % environ)
         if 'HTTP_X_ROLES' in environ:
             roles = environ['HTTP_X_ROLES'].split(',')
         context = {'user': environ.get('HTTP_X_USER_NAME'),
@@ -265,6 +267,7 @@ class Authorize(object):
                     'password': self.admin_password,
                 },
                 'tenantName': self.admin_tenant_name,
+                'service': self.service
             }
         }
 
