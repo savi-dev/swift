@@ -120,10 +120,13 @@ class Application(object):
                 container_name=container,
                 object_name=obj)
         if obj and container and account:
+            self.logger.debug("Match Object Controller")
             return ObjectController, d
         elif container and account:
+            self.logger.debug("Match Container Controller")
             return ContainerController, d
         elif account and not container and not obj:
+            self.logger.debug("Match Account Controller")
             return AccountController, d
         return None, d
 
@@ -194,6 +197,7 @@ class Application(object):
 
             self.logger.set_statsd_prefix('proxy-server.' +
                                           controller.server_type.lower())
+            self.logger.debug("Sending request to %s" % controller)
             controller = controller(self, **path_parts)
             if 'swift.trans_id' not in req.environ:
                 # if this wasn't set by an earlier middleware, set it now

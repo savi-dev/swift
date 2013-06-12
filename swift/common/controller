@@ -1,0 +1,54 @@
+def _build_policy_check_credentials(self, action, context, kwargs):
+
+    LOG.debug(_('RBAC: Authorizing %s(%s)') % (
+        action,
+        ', '.join(['%s=%s' % (k, kwargs[k]) for k in kwargs])))
+
+    try:
+        token_ref = self.token_api.get_token(
+            context=context, token_id=context['token_id'])
+    except exception.TokenNotFound:
+        LOG.warning(_('RBAC: Invalid token'))
+        raise exception.Unauthorized()
+
+    creds = {}
+    if 'token_data' in token_ref:
+        #V3 Tokens
+        token_data = token_ref['token_data']['token']
+        try:
+            creds['user_id'] = token_data['user']['id']
+        except AttributeError:
+            LOG.warning(_('RBAC: Invalid user'))
+            raise exception.Unauthorized()
+
+        if 'project' in token_data:
+            creds['project_id'] = token_data['project']['id']
+        else:
+            LOG.debug(_('RBAC: Proceeding without project'))
+
+        if 'domain' in token_data:
+            creds['domain_id'] = token_data['domain']['id']
+
+        if 'roles' in token_data:
+            creds['roles'] = []
+            for role in token_data['roles']:
+                creds['roles'].append(role['name'])
+    else:
+        #v2 Tokens
+        creds = token_ref.get('metadata', {}).copy()
+        try:
+            creds['user_id'] = token_ref['user'].get('id')
+        except AttributeError:
+            LOG.warning(_('RBAC: Invalid user'))
+            raise exception.Unauthorized()
+        try:
+            creds['project_id'] = token_ref['tenant'].get('id')
+        except AttributeError:
+            LOG.debug(_('RBAC: Proceeding without tenant'))
+        # NOTE(vish): this is pretty inefficient
+        creds['roles'] = [self.identity_api.get_role(context, role)['name']
+                          for role in creds.get('roles', [])]
+
+    return creds
+
+

@@ -38,6 +38,7 @@ from swift.common.constraints import ACCOUNT_LISTING_LIMIT, \
 from swift.common.db_replicator import ReplicatorRpc
 from swift.common.http import HTTPInsufficientStorage
 
+from swift.middleware.controller import protected
 
 DATADIR = 'accounts'
 
@@ -152,7 +153,6 @@ class AccountController(object):
                 return HTTPCreated(request=req)
             else:
                 return HTTPAccepted(request=req)
-
     @public
     def HEAD(self, req):
         """Handle HTTP HEAD request."""
@@ -197,6 +197,7 @@ class AccountController(object):
             if value != '')
         self.logger.timing_since('HEAD.timing', start_time)
         return HTTPNoContent(request=req, headers=headers)
+    
 
     @public
     def GET(self, req):

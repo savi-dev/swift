@@ -25,6 +25,7 @@
 # collected. We've seen objects hang around forever otherwise.
 
 import time
+import logging
 from urllib import unquote
 from random import shuffle
 

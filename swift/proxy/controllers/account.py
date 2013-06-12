@@ -25,6 +25,7 @@
 # collected. We've seen objects hang around forever otherwise.
 
 import time
+import logging
 from urllib import unquote
 from random import shuffle
 
@@ -36,6 +37,8 @@ from swift.common.constraints import check_metadata, MAX_ACCOUNT_NAME_LENGTH
 from swift.common.http import is_success, HTTP_NOT_FOUND
 from swift.proxy.controllers.base import Controller
 
+from swift.middleware.controller import protected
+
 
 class AccountController(Controller):
     """WSGI controller for account requests"""
@@ -44,7 +47,8 @@ class AccountController(Controller):
     def __init__(self, app, account_name, **kwargs):
         Controller.__init__(self, app)
         self.account_name = unquote(account_name)
-
+    
+    @protected(action="list-account")
     def GETorHEAD(self, req):
         """Handler for HTTP GET/HEAD requests."""
         partition, nodes = self.app.account_ring.get_nodes(self.account_name)
@@ -73,6 +77,7 @@ class AccountController(Controller):
         return resp
 
     @public
+    @protected(action="create-account")
     def PUT(self, req):
         """HTTP PUT request handler."""
         if not self.app.allow_account_management:
@@ -98,6 +103,7 @@ class AccountController(Controller):
         return resp
 
     @public
+    @protected(action="create-account")
     def POST(self, req):
         """HTTP POST request handler."""
         error_response = check_metadata(req, 'account')
@@ -131,6 +137,7 @@ class AccountController(Controller):
         return resp
 
     @public
+    @protected(action="delete-account")
     def DELETE(self, req):
         """HTTP DELETE request handler."""
         if not self.app.allow_account_management:
