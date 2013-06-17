@@ -37,7 +37,7 @@ from swift.common.constraints import check_metadata, MAX_ACCOUNT_NAME_LENGTH
 from swift.common.http import is_success, HTTP_NOT_FOUND
 from swift.proxy.controllers.base import Controller
 
-from swift.middleware.controller import protected
+from keystoneclient.middleware.authorization import controller as ABAC
 
 
 class AccountController(Controller):
@@ -48,7 +48,7 @@ class AccountController(Controller):
         Controller.__init__(self, app)
         self.account_name = unquote(account_name)
     
-    @protected(action="list-account")
+    @ABAC.protected(action="list-account")
     def GETorHEAD(self, req):
         """Handler for HTTP GET/HEAD requests."""
         partition, nodes = self.app.account_ring.get_nodes(self.account_name)
@@ -77,7 +77,7 @@ class AccountController(Controller):
         return resp
 
     @public
-    @protected(action="create-account")
+    @ABAC.protected(action="create-account-metadata")
     def PUT(self, req):
         """HTTP PUT request handler."""
         if not self.app.allow_account_management:
@@ -103,7 +103,7 @@ class AccountController(Controller):
         return resp
 
     @public
-    @protected(action="create-account")
+    @ABAC.protected(action="create-account-metadata")
     def POST(self, req):
         """HTTP POST request handler."""
         error_response = check_metadata(req, 'account')
@@ -137,7 +137,7 @@ class AccountController(Controller):
         return resp
 
     @public
-    @protected(action="delete-account")
+    @ABAC.protected(action="delete-account-metadata")
     def DELETE(self, req):
         """HTTP DELETE request handler."""
         if not self.app.allow_account_management:
