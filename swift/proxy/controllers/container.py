@@ -37,6 +37,7 @@ from swift.common.http import HTTP_ACCEPTED
 from swift.proxy.controllers.base import Controller, delay_denial, \
     get_container_memcache_key
 
+from keystoneclient.middleware.authorization import controller as ABAC
 
 class ContainerController(Controller):
     """WSGI controller for container requests"""
@@ -101,17 +102,20 @@ class ContainerController(Controller):
 
     @public
     @delay_denial
+    @ABAC.protected(action="list-objects")
     def GET(self, req):
         """Handler for HTTP GET requests."""
         return self.GETorHEAD(req)
 
     @public
     @delay_denial
+    @ABAC.protected(action="get-container-metadata")
     def HEAD(self, req):
         """Handler for HTTP HEAD requests."""
         return self.GETorHEAD(req)
 
     @public
+    @ABAC.protected(action="create-container")
     def PUT(self, req):
         """HTTP PUT request handler."""
         error_response = \
@@ -156,6 +160,7 @@ class ContainerController(Controller):
         return resp
 
     @public
+    @ABAC.protected(action="create-update-delete-container-metadata")
     def POST(self, req):
         """HTTP POST request handler."""
         error_response = \
@@ -183,6 +188,7 @@ class ContainerController(Controller):
         return resp
 
     @public
+    @ABAC.protected(action="delete-container")
     def DELETE(self, req):
         """HTTP DELETE request handler."""
         account_partition, accounts, container_count = \

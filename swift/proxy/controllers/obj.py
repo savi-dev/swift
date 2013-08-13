@@ -58,6 +58,7 @@ from swift.common.http import is_success, is_client_error, HTTP_CONTINUE, \
     HTTP_INSUFFICIENT_STORAGE, HTTPClientDisconnect
 from swift.proxy.controllers.base import Controller, delay_denial
 
+from keystoneclient.middleware.authorization import controller as ABAC
 
 class SegmentedIterable(object):
     """
@@ -371,18 +372,21 @@ class ObjectController(Controller):
 
     @public
     @delay_denial
+    @ABAC.protected(action="get-object-detail")
     def GET(self, req):
         """Handler for HTTP GET requests."""
         return self.GETorHEAD(req)
 
     @public
     @delay_denial
+    @ABAC.protected("get-object-metadata")
     def HEAD(self, req):
         """Handler for HTTP HEAD requests."""
         return self.GETorHEAD(req)
 
     @public
     @delay_denial
+    @ABAC.protected(action="update-object-metadata")
     def POST(self, req):
         """HTTP POST request handler."""
         if 'x-delete-after' in req.headers:
@@ -496,6 +500,7 @@ class ObjectController(Controller):
 
     @public
     @delay_denial
+    @ABAC.protected(action="create-object")
     def PUT(self, req):
         """HTTP PUT request handler."""
         (container_partition, containers, _junk, req.acl,
@@ -774,6 +779,7 @@ class ObjectController(Controller):
 
     @public
     @delay_denial
+    @ABAC.protected(action="delete-object")
     def DELETE(self, req):
         """HTTP DELETE request handler."""
         (container_partition, containers, _junk, req.acl,
@@ -862,6 +868,7 @@ class ObjectController(Controller):
 
     @public
     @delay_denial
+    @ABAC.protected(action="copy-object")
     def COPY(self, req):
         """HTTP COPY request handler."""
         dest = req.headers.get('Destination')
